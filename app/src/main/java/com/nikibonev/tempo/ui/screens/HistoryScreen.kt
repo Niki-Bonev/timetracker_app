@@ -2,6 +2,7 @@ package com.nikibonev.tempo.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,9 +16,12 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -64,7 +68,7 @@ fun HistoryScreen(
             Row {
                 Column(Modifier.weight(1f)) {
                     Text("History", style = MaterialTheme.typography.headlineLarge)
-                    Text("Work and breaks remain inspectable instead of disappearing into a single total.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Session history now lives inside Projects; this view is retained internally for reuse.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 TextButton(onClick = { manual = true }, enabled = snapshot.projects.any { !it.deleted }) {
                     Icon(Icons.Outlined.Add, null)
@@ -73,24 +77,10 @@ fun HistoryScreen(
             }
         }
         if (sessions.isEmpty()) {
-            item { EmptyState("No sessions yet", "Your completed focus sessions will appear here with their break timeline.") }
+            item { EmptyState("No sessions yet", "Your completed focus sessions will appear with their break timeline.") }
         } else {
             items(sessions, key = { it.session.id }) { details ->
-                Card(Modifier.fillMaxWidth().clickable { selected = details }) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row {
-                            details.project?.let { ProjectIdentity(it, Modifier.weight(1f)) }
-                            Text(formatDate(details.session.startedAt), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (details.session.intention.isNotBlank()) Text(details.session.intention, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "${formatClock(details.session.startedAt, use24Hour)} – ${details.session.endedAt?.let { formatClock(it, use24Hour) } ?: "now"}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        SessionTimeline(details.intervals, Color(details.project?.colorArgb ?: 0xFF8B7CFF), now)
-                        DurationPair(details.workMillis(now), details.breakMillis(now))
-                    }
-                }
+                SessionHistoryCard(details, now, use24Hour) { selected = details }
             }
         }
     }
@@ -112,6 +102,7 @@ fun HistoryScreen(
         ManualDialog(
             projects = snapshot.projects.filter { !it.deleted },
             now = now,
+            initialProject = null,
             onDismiss = { manual = false },
             onSave = { project, start, end, note, intention ->
                 manual = false
@@ -122,7 +113,26 @@ fun HistoryScreen(
 }
 
 @Composable
-private fun SessionDialog(
+fun SessionHistoryCard(details: SessionDetails, now: Long, use24Hour: Boolean, onClick: () -> Unit) {
+    Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row {
+                details.project?.let { ProjectIdentity(it, Modifier.weight(1f)) }
+                Text(formatDate(details.session.startedAt), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (details.session.intention.isNotBlank()) Text(details.session.intention, style = MaterialTheme.typography.titleMedium)
+            Text(
+                "${formatClock(details.session.startedAt, use24Hour)} – ${details.session.endedAt?.let { formatClock(it, use24Hour) } ?: "now"}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            SessionTimeline(details.intervals, Color(details.project?.colorArgb ?: 0xFF8B7CFF), now)
+            DurationPair(details.workMillis(now), details.breakMillis(now))
+        }
+    }
+}
+
+@Composable
+fun SessionDialog(
     details: SessionDetails,
     now: Long,
     onDismiss: () -> Unit,
@@ -132,7 +142,8 @@ private fun SessionDialog(
 ) {
     var intention by remember(details.session.id) { mutableStateOf(details.session.intention) }
     var note by remember(details.session.id) { mutableStateOf(details.session.note) }
-    var planned by remember(details.session.id) { mutableStateOf(details.session.plannedMinutes?.toString().orEmpty()) }
+    var plannedHours by remember(details.session.id) { mutableStateOf(((details.session.plannedMinutes ?: 0) / 60).takeIf { it > 0 }?.toString().orEmpty()) }
+    var plannedMinutes by remember(details.session.id) { mutableStateOf(((details.session.plannedMinutes ?: 0) % 60).takeIf { it > 0 }?.toString().orEmpty()) }
     var outcome by remember(details.session.id) { mutableStateOf(details.session.outcome) }
     var quality by remember(details.session.id) { mutableStateOf(details.session.quality) }
     var adjust by remember { mutableStateOf<TimeInterval?>(null) }
@@ -143,9 +154,15 @@ private fun SessionDialog(
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 item { DurationPair(details.workMillis(now), details.breakMillis(now)) }
-                item { OutlinedTextField(intention, { intention = it.take(120) }, label = { Text("Intention") }, modifier = Modifier.fillMaxWidth()) }
+                item { OutlinedTextField(intention, { intention = it.take(120) }, label = { Text("Task / intention") }, modifier = Modifier.fillMaxWidth()) }
                 item { OutlinedTextField(note, { note = it.take(1000) }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth()) }
-                item { OutlinedTextField(planned, { planned = it.filter(Char::isDigit).take(4) }, label = { Text("Planned minutes") }, modifier = Modifier.fillMaxWidth()) }
+                item {
+                    Text("Planned duration", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(plannedHours, { plannedHours = it.filter(Char::isDigit).take(3) }, label = { Text("Hours") }, modifier = Modifier.weight(1f))
+                        OutlinedTextField(plannedMinutes, { plannedMinutes = it.filter(Char::isDigit).take(2) }, label = { Text("Minutes") }, modifier = Modifier.weight(1f))
+                    }
+                }
                 item {
                     Text("Outcome", style = MaterialTheme.typography.labelLarge)
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -164,13 +181,18 @@ private fun SessionDialog(
                     Text("Intervals", style = MaterialTheme.typography.labelLarge)
                     details.intervals.filterNot { it.deleted }.forEach { interval ->
                         TextButton(onClick = { adjust = interval }) {
-                            Text("${interval.type.name.lowercase().replaceFirstChar(Char::uppercase)} · ${com.nikibonev.tempo.util.formatDuration(interval.durationMillis(now), true)}")
+                            Text("${interval.type.name.lowercase().replaceFirstChar(Char::uppercase)} · ${com.nikibonev.tempo.util.formatDuration(interval.durationMillis(now))}")
                         }
                     }
                 }
             }
         },
-        confirmButton = { Button(onClick = { onSave(intention, note, planned.toIntOrNull(), outcome, quality) }) { Text("Save") } },
+        confirmButton = {
+            Button(onClick = {
+                val planned = (plannedHours.toIntOrNull() ?: 0) * 60 + (plannedMinutes.toIntOrNull() ?: 0)
+                onSave(intention, note, planned.takeIf { it > 0 }, outcome, quality)
+            }) { Text("Save") }
+        },
         dismissButton = {
             Row {
                 IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, "Delete") }
@@ -198,14 +220,17 @@ private fun SessionDialog(
 }
 
 @Composable
-private fun ManualDialog(
+fun ManualDialog(
     projects: List<Project>,
     now: Long,
+    initialProject: Project?,
     onDismiss: () -> Unit,
     onSave: (Project, Long, Long, String, String) -> Unit,
 ) {
-    var project by remember { mutableStateOf(projects.firstOrNull()) }
-    var minutes by remember { mutableStateOf("60") }
+    var project by remember(projects, initialProject?.id) { mutableStateOf(initialProject ?: projects.firstOrNull()) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var hours by remember { mutableStateOf("1") }
+    var minutes by remember { mutableStateOf("0") }
     var intention by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     AlertDialog(
@@ -213,20 +238,36 @@ private fun ManualDialog(
         title = { Text("Add time manually") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    projects.take(4).forEach { p -> SelectablePill(p.name, project?.id == p.id) { project = p } }
+                Text("Project", style = MaterialTheme.typography.labelLarge)
+                Box {
+                    OutlinedButton(onClick = { menuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(project?.let { "${it.icon}  ${it.name}" } ?: "Choose project")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        projects.forEach { p ->
+                            val parent = p.parentProjectId?.let { id -> projects.firstOrNull { it.id == id } }
+                            DropdownMenuItem(
+                                text = { Text(if (parent == null) p.name else "${parent.name} › ${p.name}") },
+                                onClick = { project = p; menuOpen = false },
+                            )
+                        }
+                    }
                 }
-                OutlinedTextField(minutes, { minutes = it.filter(Char::isDigit).take(4) }, label = { Text("Minutes") }, modifier = Modifier.fillMaxWidth())
+                Text("Duration", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(hours, { hours = it.filter(Char::isDigit).take(3) }, label = { Text("Hours") }, modifier = Modifier.weight(1f))
+                    OutlinedTextField(minutes, { minutes = it.filter(Char::isDigit).take(2) }, label = { Text("Minutes") }, modifier = Modifier.weight(1f))
+                }
                 OutlinedTextField(intention, { intention = it.take(120) }, label = { Text("What did you work on?") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(note, { note = it.take(1000) }, label = { Text("Note") }, modifier = Modifier.fillMaxWidth())
-                Text("Manual time ends now. You can fine-tune intervals afterward from History.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("This entry ends now. You can fine-tune its intervals afterward.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = {
             Button(onClick = {
                 val p = project ?: return@Button
-                val duration = (minutes.toLongOrNull() ?: 60L).coerceAtLeast(1L) * 60_000L
-                onSave(p, now - duration, now, note, intention)
+                val durationMinutes = ((hours.toLongOrNull() ?: 0L) * 60L + (minutes.toLongOrNull() ?: 0L)).coerceAtLeast(1L)
+                onSave(p, now - durationMinutes * 60_000L, now, note, intention)
             }, enabled = project != null) { Text("Add") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
