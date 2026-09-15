@@ -29,7 +29,11 @@ class TempoDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
                 name TEXT NOT NULL,
                 color_argb INTEGER NOT NULL,
                 icon TEXT NOT NULL,
+                parent_project_id TEXT,
                 weekly_goal_minutes INTEGER NOT NULL DEFAULT 0,
+                goal_minutes INTEGER NOT NULL DEFAULT 0,
+                goal_start_at INTEGER,
+                goal_end_at INTEGER,
                 archived INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
@@ -38,6 +42,7 @@ class TempoDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
             """.trimIndent(),
         )
         db.execSQL("CREATE INDEX idx_projects_owner ON projects(owner_id, deleted, archived)")
+        db.execSQL("CREATE INDEX idx_projects_parent ON projects(owner_id, parent_project_id, deleted)")
 
         db.execSQL(
             """
@@ -82,38 +87,90 @@ class TempoDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Version 1 is the initial closed-testing schema. Future migrations belong here.
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE projects ADD COLUMN parent_project_id TEXT")
+            db.execSQL("ALTER TABLE projects ADD COLUMN goal_minutes INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE projects ADD COLUMN goal_start_at INTEGER")
+            db.execSQL("ALTER TABLE projects ADD COLUMN goal_end_at INTEGER")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_projects_parent ON projects(owner_id, parent_project_id, deleted)")
+        }
     }
 
     fun getProjects(ownerId: String, includeArchived: Boolean = true, includeDeleted: Boolean = false): List<Project> =
         readableDatabase.query(
-            "projects", null,
+            "projects",
+            null,
             buildString {
                 append("owner_id = ?")
                 if (!includeDeleted) append(" AND deleted = 0")
                 if (!includeArchived) append(" AND archived = 0")
             },
-            arrayOf(ownerId), null, null, "archived ASC, name COLLATE NOCASE ASC",
+            arrayOf(ownerId),
+            null,
+            null,
+            "archived ASC, parent_project_id ASC, name COLLATE NOCASE ASC",
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toProject()) } }
 
-    fun getProject(id: String): Project? = readableDatabase.query("projects", null, "id = ?", arrayOf(id), null, null, null, "1").use { if (it.moveToFirst()) it.toProject() else null }
-    fun getProjectForOwner(ownerId: String, id: String): Project? = readableDatabase.query("projects", null, "owner_id = ? AND id = ?", arrayOf(ownerId, id), null, null, null, "1").use { if (it.moveToFirst()) it.toProject() else null }
-    fun upsertProject(project: Project) { writableDatabase.insertWithOnConflict("projects", null, project.toValues(), SQLiteDatabase.CONFLICT_REPLACE) }
+    fun getProject(id: String): Project? =
+        readableDatabase.query("projects", null, "id = ?", arrayOf(id), null, null, null, "1")
+            .use { cursor -> if (cursor.moveToFirst()) cursor.toProject() else null }
+
+    fun getProjectForOwner(ownerId: String, id: String): Project? =
+        readableDatabase.query("projects", null, "owner_id = ? AND id = ?", arrayOf(ownerId, id), null, null, null, "1")
+            .use { cursor -> if (cursor.moveToFirst()) cursor.toProject() else null }
+
+    fun upsertProject(project: Project) {
+        writableDatabase.insertWithOnConflict("projects", null, project.toValues(), SQLiteDatabase.CONFLICT_REPLACE)
+    }
 
     fun getSessions(ownerId: String, includeDeleted: Boolean = false): List<Session> =
-        readableDatabase.query("sessions", null, "owner_id = ?" + if (includeDeleted) "" else " AND deleted = 0", arrayOf(ownerId), null, null, "started_at DESC")
-            .use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toSession()) } }
-    fun getSession(id: String): Session? = readableDatabase.query("sessions", null, "id = ?", arrayOf(id), null, null, null, "1").use { if (it.moveToFirst()) it.toSession() else null }
-    fun upsertSession(session: Session) { writableDatabase.insertWithOnConflict("sessions", null, session.toValues(), SQLiteDatabase.CONFLICT_REPLACE) }
+        readableDatabase.query(
+            "sessions",
+            null,
+            "owner_id = ?" + if (includeDeleted) "" else " AND deleted = 0",
+            arrayOf(ownerId),
+            null,
+            null,
+            "started_at DESC",
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toSession()) } }
+
+    fun getSession(id: String): Session? =
+        readableDatabase.query("sessions", null, "id = ?", arrayOf(id), null, null, null, "1")
+            .use { cursor -> if (cursor.moveToFirst()) cursor.toSession() else null }
+
+    fun upsertSession(session: Session) {
+        writableDatabase.insertWithOnConflict("sessions", null, session.toValues(), SQLiteDatabase.CONFLICT_REPLACE)
+    }
 
     fun getIntervalsForSession(sessionId: String, includeDeleted: Boolean = false): List<TimeInterval> =
-        readableDatabase.query("intervals", null, "session_id = ?" + if (includeDeleted) "" else " AND deleted = 0", arrayOf(sessionId), null, null, "started_at ASC")
-            .use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toInterval()) } }
+        readableDatabase.query(
+            "intervals",
+            null,
+            "session_id = ?" + if (includeDeleted) "" else " AND deleted = 0",
+            arrayOf(sessionId),
+            null,
+            null,
+            "started_at ASC",
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toInterval()) } }
+
     fun getIntervals(ownerId: String, includeDeleted: Boolean = false): List<TimeInterval> =
-        readableDatabase.query("intervals", null, "owner_id = ?" + if (includeDeleted) "" else " AND deleted = 0", arrayOf(ownerId), null, null, "started_at ASC")
-            .use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toInterval()) } }
-    fun getInterval(id: String): TimeInterval? = readableDatabase.query("intervals", null, "id = ?", arrayOf(id), null, null, null, "1").use { if (it.moveToFirst()) it.toInterval() else null }
-    fun upsertInterval(interval: TimeInterval) { writableDatabase.insertWithOnConflict("intervals", null, interval.toValues(), SQLiteDatabase.CONFLICT_REPLACE) }
+        readableDatabase.query(
+            "intervals",
+            null,
+            "owner_id = ?" + if (includeDeleted) "" else " AND deleted = 0",
+            arrayOf(ownerId),
+            null,
+            null,
+            "started_at ASC",
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toInterval()) } }
+
+    fun getInterval(id: String): TimeInterval? =
+        readableDatabase.query("intervals", null, "id = ?", arrayOf(id), null, null, null, "1")
+            .use { cursor -> if (cursor.moveToFirst()) cursor.toInterval() else null }
+
+    fun upsertInterval(interval: TimeInterval) {
+        writableDatabase.insertWithOnConflict("intervals", null, interval.toValues(), SQLiteDatabase.CONFLICT_REPLACE)
+    }
 
     fun getActiveSession(ownerId: String): Session? = readableDatabase.query(
         "sessions", null, "owner_id = ? AND deleted = 0 AND state != ?", arrayOf(ownerId, SessionState.COMPLETED.name), null, null, "started_at DESC", "1",
@@ -140,45 +197,84 @@ class TempoDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
         } finally { writableDatabase.endTransaction() }
     }
 
-    fun ownerHasData(ownerId: String): Boolean = readableDatabase.rawQuery(
-        "SELECT EXISTS(SELECT 1 FROM projects WHERE owner_id = ? AND deleted = 0 LIMIT 1) OR EXISTS(SELECT 1 FROM sessions WHERE owner_id = ? AND deleted = 0 LIMIT 1)",
-        arrayOf(ownerId, ownerId),
-    ).use { it.moveToFirst() && it.getInt(0) == 1 }
+    fun ownerHasData(ownerId: String): Boolean =
+        readableDatabase.rawQuery(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE owner_id = ? AND deleted = 0 LIMIT 1) OR EXISTS(SELECT 1 FROM sessions WHERE owner_id = ? AND deleted = 0 LIMIT 1)",
+            arrayOf(ownerId, ownerId),
+        ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) == 1 }
 
     fun transaction(block: SQLiteDatabase.() -> Unit) {
         writableDatabase.beginTransaction()
-        try { writableDatabase.block(); writableDatabase.setTransactionSuccessful() } finally { writableDatabase.endTransaction() }
+        try {
+            writableDatabase.block()
+            writableDatabase.setTransactionSuccessful()
+        } finally { writableDatabase.endTransaction() }
     }
 
     private fun Cursor.toProject() = Project(
-        id = string("id"), ownerId = string("owner_id"), name = string("name"), colorArgb = long("color_argb"), icon = string("icon"),
-        weeklyGoalMinutes = int("weekly_goal_minutes"), archived = bool("archived"), createdAt = long("created_at"), updatedAt = long("updated_at"), deleted = bool("deleted"),
+        id = string("id"),
+        ownerId = string("owner_id"),
+        name = string("name"),
+        colorArgb = long("color_argb"),
+        icon = string("icon"),
+        parentProjectId = nullableString("parent_project_id"),
+        weeklyGoalMinutes = int("weekly_goal_minutes"),
+        goalMinutes = int("goal_minutes"),
+        goalStartAt = nullableLong("goal_start_at"),
+        goalEndAt = nullableLong("goal_end_at"),
+        archived = bool("archived"),
+        createdAt = long("created_at"),
+        updatedAt = long("updated_at"),
+        deleted = bool("deleted"),
     )
 
     private fun Cursor.toSession() = Session(
-        id = string("id"), ownerId = string("owner_id"), projectId = string("project_id"), intention = string("intention"), note = string("note"),
-        plannedMinutes = nullableInt("planned_minutes"), outcome = enumValueOrDefault<SessionOutcome>(string("outcome"), SessionOutcome.NONE),
-        quality = nullableInt("quality"), state = enumValueOrDefault<SessionState>(string("state"), SessionState.COMPLETED), startedAt = long("started_at"),
-        endedAt = nullableLong("ended_at"), createdAt = long("created_at"), updatedAt = long("updated_at"), deleted = bool("deleted"),
+        id = string("id"),
+        ownerId = string("owner_id"),
+        projectId = string("project_id"),
+        intention = string("intention"),
+        note = string("note"),
+        plannedMinutes = nullableInt("planned_minutes"),
+        outcome = SessionOutcome.entries.firstOrNull { it.name == string("outcome") } ?: SessionOutcome.NONE,
+        quality = nullableInt("quality"),
+        state = SessionState.entries.firstOrNull { it.name == string("state") } ?: SessionState.COMPLETED,
+        startedAt = long("started_at"),
+        endedAt = nullableLong("ended_at"),
+        createdAt = long("created_at"),
+        updatedAt = long("updated_at"),
+        deleted = bool("deleted"),
     )
 
     private fun Cursor.toInterval() = TimeInterval(
-        id = string("id"), ownerId = string("owner_id"), sessionId = string("session_id"),
-        type = enumValueOrDefault<IntervalType>(string("type"), IntervalType.WORK), startedAt = long("started_at"), endedAt = nullableLong("ended_at"),
-        updatedAt = long("updated_at"), deleted = bool("deleted"),
+        id = string("id"),
+        ownerId = string("owner_id"),
+        sessionId = string("session_id"),
+        type = IntervalType.entries.firstOrNull { it.name == string("type") } ?: IntervalType.WORK,
+        startedAt = long("started_at"),
+        endedAt = nullableLong("ended_at"),
+        updatedAt = long("updated_at"),
+        deleted = bool("deleted"),
     )
 
     private fun Project.toValues() = ContentValues().apply {
         put("id", id); put("owner_id", ownerId); put("name", name); put("color_argb", colorArgb); put("icon", icon)
-        put("weekly_goal_minutes", weeklyGoalMinutes); put("archived", archived.asDb()); put("created_at", createdAt); put("updated_at", updatedAt); put("deleted", deleted.asDb())
+        if (parentProjectId == null) putNull("parent_project_id") else put("parent_project_id", parentProjectId)
+        put("weekly_goal_minutes", weeklyGoalMinutes); put("goal_minutes", goalMinutes)
+        if (goalStartAt == null) putNull("goal_start_at") else put("goal_start_at", goalStartAt)
+        if (goalEndAt == null) putNull("goal_end_at") else put("goal_end_at", goalEndAt)
+        put("archived", archived.asDb()); put("created_at", createdAt); put("updated_at", updatedAt); put("deleted", deleted.asDb())
     }
+
     private fun Session.toValues() = ContentValues().apply {
         put("id", id); put("owner_id", ownerId); put("project_id", projectId); put("intention", intention); put("note", note)
         if (plannedMinutes == null) putNull("planned_minutes") else put("planned_minutes", plannedMinutes)
-        put("outcome", outcome.name); if (quality == null) putNull("quality") else put("quality", quality); put("state", state.name); put("started_at", startedAt)
+        put("outcome", outcome.name)
+        if (quality == null) putNull("quality") else put("quality", quality)
+        put("state", state.name); put("started_at", startedAt)
         if (endedAt == null) putNull("ended_at") else put("ended_at", endedAt)
         put("created_at", createdAt); put("updated_at", updatedAt); put("deleted", deleted.asDb())
     }
+
     private fun TimeInterval.toValues() = ContentValues().apply {
         put("id", id); put("owner_id", ownerId); put("session_id", sessionId); put("type", type.name); put("started_at", startedAt)
         if (endedAt == null) putNull("ended_at") else put("ended_at", endedAt)
@@ -186,16 +282,16 @@ class TempoDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
     }
 
     private fun Cursor.string(name: String) = getString(getColumnIndexOrThrow(name))
+    private fun Cursor.nullableString(name: String): String? = getColumnIndexOrThrow(name).let { if (isNull(it)) null else getString(it) }
     private fun Cursor.long(name: String) = getLong(getColumnIndexOrThrow(name))
     private fun Cursor.int(name: String) = getInt(getColumnIndexOrThrow(name))
     private fun Cursor.bool(name: String) = int(name) != 0
     private fun Cursor.nullableLong(name: String): Long? = getColumnIndexOrThrow(name).let { if (isNull(it)) null else getLong(it) }
     private fun Cursor.nullableInt(name: String): Int? = getColumnIndexOrThrow(name).let { if (isNull(it)) null else getInt(it) }
     private fun Boolean.asDb() = if (this) 1 else 0
-    private inline fun <reified T : Enum<T>> enumValueOrDefault(raw: String, fallback: T): T = enumValues<T>().firstOrNull { it.name == raw } ?: fallback
 
     companion object {
         private const val DB_NAME = "tempo.db"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 2
     }
 }
