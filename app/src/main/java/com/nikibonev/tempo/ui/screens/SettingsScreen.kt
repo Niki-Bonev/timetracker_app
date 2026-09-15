@@ -10,10 +10,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -71,6 +71,7 @@ fun SettingsScreen(
     var authDialog by remember { mutableStateOf(false) }
     var deleteAccount by remember { mutableStateOf(false) }
     var deleteLocal by remember { mutableStateOf(false) }
+    var staleHours by remember(settings.staleTimerHours) { mutableStateOf(settings.staleTimerHours.toString()) }
 
     LazyColumn(
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
@@ -92,7 +93,7 @@ fun SettingsScreen(
                     )
                     Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = onSyncNow) { Text("Sync now") }
-                        OutlinedButton(onClick = onSignOut) { Icon(Icons.Outlined.Logout, null); Text(" Sign out") }
+                        OutlinedButton(onClick = onSignOut) { Icon(Icons.AutoMirrored.Outlined.Logout, null); Text(" Sign out") }
                     }
                 } else {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -109,21 +110,40 @@ fun SettingsScreen(
         item {
             SectionHeader("Appearance")
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                AppTheme.entries.forEach { theme -> SelectablePill(theme.name.lowercase().replaceFirstChar(Char::uppercase), settings.theme == theme) { onTheme(theme) } }
+                AppTheme.entries.forEach { theme ->
+                    SelectablePill(theme.name.lowercase().replaceFirstChar(Char::uppercase), settings.theme == theme) { onTheme(theme) }
+                }
             }
             ToggleRow("Dynamic color", "Use your device palette on Android 12+", settings.dynamicColor, onDynamicColor)
         }
         item {
             SectionHeader("Tracking")
             ToggleRow("Timer notification", "Pause, resume and finish from the notification shade", settings.showTimerNotification, onNotifications)
+            if (settings.notificationPermissionAsked) {
+                Text(
+                    "Tempo asks Android for notification permission only once. If you declined it, enable notifications later from Tempo's Android app settings.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             ToggleRow("24-hour time", "Use 18:30 instead of 6:30 PM", settings.use24HourTime, onUse24Hour)
             Text("Week starts", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                WeekStart.entries.forEach { value -> SelectablePill(value.name.lowercase().replaceFirstChar(Char::uppercase), settings.weekStart == value) { onWeekStart(value) } }
+                WeekStart.entries.forEach { value ->
+                    SelectablePill(value.name.lowercase().replaceFirstChar(Char::uppercase), settings.weekStart == value) { onWeekStart(value) }
+                }
             }
-            Text("Forgotten timer warning threshold", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(6, 10, 14, 24).forEach { hours -> SelectablePill("${hours}h", settings.staleTimerHours == hours) { onStaleHours(hours) } }
+            Text("Forgotten timer warning", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = staleHours,
+                    onValueChange = { staleHours = it.filter(Char::isDigit).take(2) },
+                    label = { Text("Hours") },
+                    supportingText = { Text("10 hours is the recommended default") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                )
+                Button(onClick = { onStaleHours(staleHours.toIntOrNull() ?: 10) }) { Text("Save") }
             }
         }
         item {
@@ -133,7 +153,7 @@ fun SettingsScreen(
                 OutlinedButton(onClick = onExportCsv, modifier = Modifier.weight(1f)) { Text("CSV") }
             }
             OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Icon(Icons.Outlined.Upload, null); Text(" Import Tempo backup") }
-            Text("JSON keeps projects, sessions and break intervals. CSV is convenient for spreadsheets and analysis.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+            Text("JSON keeps projects, subprojects, sessions, goals and break intervals. CSV is convenient for spreadsheets and analysis.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
         }
         item {
             SectionHeader("Privacy & deletion")
