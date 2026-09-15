@@ -21,32 +21,63 @@ class TimerNotificationManager(private val context: Context) {
     init { createChannel() }
 
     fun render(active: ActiveTimer?, settings: AppSettings) {
-        if (!settings.showTimerNotification || active == null || !canPostNotifications()) { cancel(); return }
+        if (!settings.showTimerNotification || active == null) { cancel(); return }
+        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            cancel()
+            return
+        }
+
         val notificationManager = NotificationManagerCompat.from(context)
-        val openApp = PendingIntent.getActivity(context, 100, Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val openApp = PendingIntent.getActivity(
+            context,
+            100,
+            Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val timerAction = if (active.isPaused) ACTION_RESUME else ACTION_PAUSE
         val actionLabel = if (active.isPaused) "Resume" else "Pause"
         val actionIcon = if (active.isPaused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause
-        val actionIntent = PendingIntent.getBroadcast(context, if (active.isPaused) 201 else 202, Intent(context, TimerActionReceiver::class.java).apply { this.action = timerAction; putExtra(EXTRA_OWNER_ID, active.session.ownerId) }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val finishIntent = PendingIntent.getBroadcast(context, 203, Intent(context, TimerActionReceiver::class.java).apply { this.action = ACTION_FINISH; putExtra(EXTRA_OWNER_ID, active.session.ownerId) }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val actionIntent = PendingIntent.getBroadcast(
+            context,
+            if (active.isPaused) 201 else 202,
+            Intent(context, TimerActionReceiver::class.java).apply { this.action = timerAction; putExtra(EXTRA_OWNER_ID, active.session.ownerId) },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val finishIntent = PendingIntent.getBroadcast(
+            context,
+            203,
+            Intent(context, TimerActionReceiver::class.java).apply { this.action = ACTION_FINISH; putExtra(EXTRA_OWNER_ID, active.session.ownerId) },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val currentInterval = active.intervals.lastOrNull { !it.deleted && it.endedAt == null }
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_timer)
             .setContentTitle(if (active.isPaused) "Break · ${active.project.name}" else active.project.name)
             .setContentText(if (active.isPaused) "Focused ${formatDuration(active.workMillis(), compact = true)} so far" else active.session.intention.ifBlank { "Tracking focused work" })
-            .setContentIntent(openApp).setOngoing(true).setOnlyAlertOnce(true).setSilent(true)
-            .setCategory(NotificationCompat.CATEGORY_STOPWATCH).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setContentIntent(openApp)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setCategory(NotificationCompat.CATEGORY_STOPWATCH)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .addAction(actionIcon, actionLabel, actionIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Finish", finishIntent)
         if (currentInterval != null) builder.setWhen(currentInterval.startedAt).setUsesChronometer(true).setShowWhen(true)
-        notificationManager.notify(NOTIFICATION_ID, builder.build())
+        try {
+            notificationManager.notify(NOTIFICATION_ID, builder.build())
+        } catch (_: SecurityException) {
+            // Permission can be revoked between the explicit check and notify().
+        }
     }
 
     fun cancel() = NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
-    private fun canPostNotifications(): Boolean = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Active timer", NotificationManager.IMPORTANCE_LOW).apply { description = "Shows an ongoing work or break timer with quick controls."; setShowBadge(false) }
+            val channel = NotificationChannel(CHANNEL_ID, "Active timer", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "Shows an ongoing work or break timer with quick controls."
+                setShowBadge(false)
+            }
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }

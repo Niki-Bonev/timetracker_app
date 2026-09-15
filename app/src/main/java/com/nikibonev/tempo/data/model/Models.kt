@@ -8,7 +8,7 @@ import java.util.UUID
 enum class SessionState { RUNNING, PAUSED, COMPLETED }
 enum class IntervalType { WORK, BREAK }
 enum class SessionOutcome { NONE, DONE, PROGRESS, STUCK }
-enum class AppTheme { SYSTEM, LIGHT, DARK }
+enum class AppTheme { LIGHT, DARK }
 enum class WeekStart { MONDAY, SUNDAY }
 
 data class Project(
@@ -17,12 +17,19 @@ data class Project(
     val name: String,
     val colorArgb: Long,
     val icon: String = "●",
+    val parentProjectId: String? = null,
     val weeklyGoalMinutes: Int = 0,
+    val goalMinutes: Int = 0,
+    val goalStartAt: Long? = null,
+    val goalEndAt: Long? = null,
     val archived: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val deleted: Boolean = false,
-)
+) {
+    val hasDateRangeGoal: Boolean
+        get() = goalMinutes > 0 && goalStartAt != null && goalEndAt != null && goalEndAt > goalStartAt
+}
 
 data class Session(
     val id: String = UUID.randomUUID().toString(),
@@ -83,9 +90,10 @@ data class ActiveTimer(
 }
 
 data class AppSettings(
-    val theme: AppTheme = AppTheme.SYSTEM,
+    val theme: AppTheme = AppTheme.DARK,
     val dynamicColor: Boolean = true,
     val showTimerNotification: Boolean = true,
+    val notificationPermissionAsked: Boolean = false,
     val weekStart: WeekStart = WeekStart.MONDAY,
     val use24HourTime: Boolean = true,
     val staleTimerHours: Int = 10,
@@ -126,7 +134,7 @@ data class AnalyticsSnapshot(
 )
 
 data class ExportBundle(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val exportedAt: Long = System.currentTimeMillis(),
     val projects: List<Project>,
     val sessions: List<Session>,

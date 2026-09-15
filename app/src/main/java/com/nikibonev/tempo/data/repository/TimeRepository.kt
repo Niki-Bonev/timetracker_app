@@ -12,6 +12,7 @@ import com.nikibonev.tempo.data.model.TimeDataSnapshot
 import com.nikibonev.tempo.data.model.TimeInterval
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -25,6 +26,7 @@ class TimeRepository(
     private val revision = MutableStateFlow(0L)
     var onDataChanged: (() -> Unit)? = null
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun observeSnapshot(ownerId: Flow<String>): Flow<TimeDataSnapshot> =
         combine(ownerId, revision) { owner, _ -> owner }
             .mapLatest { owner -> withContext(ioDispatcher) { loadSnapshot(owner) } }
@@ -43,29 +45,79 @@ class TimeRepository(
         TimeDataSnapshot(projects = projects, sessions = sessions, activeTimer = active)
     }
 
-    suspend fun createProject(ownerId: String, name: String, colorArgb: Long, icon: String, weeklyGoalMinutes: Int): Project = write {
+    suspend fun createProject(
+        ownerId: String,
+        name: String,
+        colorArgb: Long,
+        icon: String,
+        weeklyGoalMinutes: Int = 0,
+        parentProjectId: String? = null,
+        goalMinutes: Int = 0,
+        goalStartAt: Long? = null,
+        goalEndAt: Long? = null,
+    ): Project = write {
+        parentProjectId?.let { parentId ->
+            val parent = database.getProjectForOwner(ownerId, parentId)
+            require(parent != null && !parent.deleted && parent.parentProjectId == null) { "Parent project is not available." }
+        }
         val now = System.currentTimeMillis()
-        val project = Project(ownerId = ownerId, name = name.trim().ifBlank { "Untitled project" }, colorArgb = colorArgb, icon = icon.ifBlank { "●" }, weeklyGoalMinutes = weeklyGoalMinutes.coerceAtLeast(0), createdAt = now, updatedAt = now)
+        val rangeValid = goalMinutes > 0 && goalStartAt != null && goalEndAt != null && goalEndAt > goalStartAt
+        val project = Project(
+            ownerId = ownerId,
+            name = name.trim().ifBlank { "Untitled project" },
+            colorArgb = colorArgb,
+            icon = icon.ifBlank { "●" },
+            parentProjectId = parentProjectId,
+            weeklyGoalMinutes = weeklyGoalMinutes.coerceAtLeast(0),
+            goalMinutes = if (rangeValid) goalMinutes.coerceAtLeast(0) else 0,
+            goalStartAt = if (rangeValid) goalStartAt else null,
+            goalEndAt = if (rangeValid) goalEndAt else null,
+            createdAt = now,
+            updatedAt = now,
+        )
         database.upsertProject(project)
         project
     }
 
     suspend fun updateProject(project: Project): Project = write {
-        val updated = project.copy(name = project.name.trim().ifBlank { "Untitled project" }, weeklyGoalMinutes = project.weeklyGoalMinutes.coerceAtLeast(0), updatedAt = System.currentTimeMillis())
+        val rangeValid = project.goalMinutes > 0 && project.goalStartAt != null && project.goalEndAt != null && project.goalEndAt > project.goalStartAt
+        val updated = project.copy(
+            name = project.name.trim().ifBlank { "Untitled project" },
+            weeklyGoalMinutes = project.weeklyGoalMinutes.coerceAtLeast(0),
+            goalMinutes = if (rangeValid) project.goalMinutes.coerceAtLeast(0) else 0,
+            goalStartAt = if (rangeValid) project.goalStartAt else null,
+            goalEndAt = if (rangeValid) project.goalEndAt else null,
+            updatedAt = System.currentTimeMillis(),
+        )
         database.upsertProject(updated)
         updated
     }
 
     suspend fun setProjectArchived(projectId: String, archived: Boolean) = write {
         val project = database.getProject(projectId) ?: return@write
-        database.upsertProject(project.copy(archived = archived, updatedAt = System.currentTimeMillis()))
+        val now = System.currentTimeMillis()
+        database.upsertProject(project.copy(archived = archived, updatedAt = now))
+        if (project.parentProjectId == null) {
+            database.getProjects(project.ownerId, includeArchived = true, includeDeleted = true)
+                .filter { it.parentProjectId == project.id && !it.deleted }
+                .forEach { database.upsertProject(it.copy(archived = archived, updatedAt = now)) }
+        }
     }
 
     suspend fun deleteProject(projectId: String, deleteSessions: Boolean = false) = write {
         val project = database.getProject(projectId) ?: return@write
         val now = System.currentTimeMillis()
-        database.upsertProject(project.copy(deleted = true, updatedAt = now))
-        if (deleteSessions) database.getSessions(project.ownerId, includeDeleted = true).filter { it.projectId == projectId && !it.deleted }.forEach { softDeleteSessionInternal(it, now) }
+        val allProjects = database.getProjects(project.ownerId, includeArchived = true, includeDeleted = true)
+        val targets = if (project.parentProjectId == null) {
+            listOf(project) + allProjects.filter { it.parentProjectId == project.id && !it.deleted }
+        } else listOf(project)
+        targets.forEach { database.upsertProject(it.copy(deleted = true, updatedAt = now)) }
+        if (deleteSessions) {
+            val ids = targets.map { it.id }.toSet()
+            database.getSessions(project.ownerId, includeDeleted = true)
+                .filter { it.projectId in ids && !it.deleted }
+                .forEach { softDeleteSessionInternal(it, now) }
+        }
     }
 
     suspend fun startSession(ownerId: String, projectId: String, intention: String = "", plannedMinutes: Int? = null, now: Long = System.currentTimeMillis()): Session = write {
@@ -82,7 +134,9 @@ class TimeRepository(
     suspend fun pause(ownerId: String, now: Long = System.currentTimeMillis()) = write {
         val session = database.getActiveSession(ownerId) ?: return@write
         if (session.state != SessionState.RUNNING) return@write
-        database.getIntervalsForSession(session.id).lastOrNull { it.endedAt == null }?.let { open -> database.upsertInterval(open.copy(endedAt = now.coerceAtLeast(open.startedAt), updatedAt = now)) }
+        database.getIntervalsForSession(session.id).lastOrNull { it.endedAt == null }?.let { open ->
+            database.upsertInterval(open.copy(endedAt = now.coerceAtLeast(open.startedAt), updatedAt = now))
+        }
         database.upsertInterval(TimeInterval(ownerId = ownerId, sessionId = session.id, type = IntervalType.BREAK, startedAt = now, updatedAt = now))
         database.upsertSession(session.copy(state = SessionState.PAUSED, updatedAt = now))
     }
@@ -90,7 +144,9 @@ class TimeRepository(
     suspend fun resume(ownerId: String, now: Long = System.currentTimeMillis()) = write {
         val session = database.getActiveSession(ownerId) ?: return@write
         if (session.state != SessionState.PAUSED) return@write
-        database.getIntervalsForSession(session.id).lastOrNull { it.endedAt == null }?.let { open -> database.upsertInterval(open.copy(endedAt = now.coerceAtLeast(open.startedAt), updatedAt = now)) }
+        database.getIntervalsForSession(session.id).lastOrNull { it.endedAt == null }?.let { open ->
+            database.upsertInterval(open.copy(endedAt = now.coerceAtLeast(open.startedAt), updatedAt = now))
+        }
         database.upsertInterval(TimeInterval(ownerId = ownerId, sessionId = session.id, type = IntervalType.WORK, startedAt = now, updatedAt = now))
         database.upsertSession(session.copy(state = SessionState.RUNNING, updatedAt = now))
     }
@@ -164,7 +220,9 @@ class TimeRepository(
 
     private fun finishInternal(ownerId: String, note: String? = null, outcome: SessionOutcome? = null, quality: Int? = null, now: Long): Session? {
         val session = database.getActiveSession(ownerId) ?: return null
-        database.getIntervalsForSession(session.id).lastOrNull { it.endedAt == null }?.let { open -> database.upsertInterval(open.copy(endedAt = now.coerceAtLeast(open.startedAt), updatedAt = now)) }
+        database.getIntervalsForSession(session.id).lastOrNull { it.endedAt == null }?.let { open ->
+            database.upsertInterval(open.copy(endedAt = now.coerceAtLeast(open.startedAt), updatedAt = now))
+        }
         val finished = session.copy(note = note?.trim() ?: session.note, outcome = outcome ?: session.outcome, quality = quality?.coerceIn(1, 5) ?: session.quality, state = SessionState.COMPLETED, endedAt = now.coerceAtLeast(session.startedAt), updatedAt = now)
         database.upsertSession(finished)
         return finished

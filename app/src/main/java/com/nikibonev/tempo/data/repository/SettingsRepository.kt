@@ -16,27 +16,36 @@ private val Context.tempoDataStore by preferencesDataStore(name = "tempo_setting
 
 class SettingsRepository(private val context: Context) {
     val settings: Flow<AppSettings> = context.tempoDataStore.data.map { prefs ->
+        val storedTheme = prefs[Keys.THEME]
+        val theme = when (storedTheme) {
+            AppTheme.LIGHT.name -> AppTheme.LIGHT
+            AppTheme.DARK.name -> AppTheme.DARK
+            else -> AppTheme.DARK
+        }
         AppSettings(
-            theme = prefs[Keys.THEME]?.let { runCatching { AppTheme.valueOf(it) }.getOrNull() } ?: AppTheme.SYSTEM,
+            theme = theme,
             dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: true,
             showTimerNotification = prefs[Keys.TIMER_NOTIFICATION] ?: true,
+            notificationPermissionAsked = prefs[Keys.NOTIFICATION_PERMISSION_ASKED] ?: false,
             weekStart = prefs[Keys.WEEK_START]?.let { runCatching { WeekStart.valueOf(it) }.getOrNull() } ?: WeekStart.MONDAY,
             use24HourTime = prefs[Keys.USE_24_HOUR] ?: true,
-            staleTimerHours = (prefs[Keys.STALE_TIMER_HOURS] ?: 10).coerceIn(2, 48),
+            staleTimerHours = (prefs[Keys.STALE_TIMER_HOURS] ?: 10).coerceIn(1, 72),
         )
     }
 
     suspend fun setTheme(theme: AppTheme) = context.tempoDataStore.edit { it[Keys.THEME] = theme.name }
     suspend fun setDynamicColor(enabled: Boolean) = context.tempoDataStore.edit { it[Keys.DYNAMIC_COLOR] = enabled }
     suspend fun setTimerNotification(enabled: Boolean) = context.tempoDataStore.edit { it[Keys.TIMER_NOTIFICATION] = enabled }
+    suspend fun markNotificationPermissionAsked() = context.tempoDataStore.edit { it[Keys.NOTIFICATION_PERMISSION_ASKED] = true }
     suspend fun setWeekStart(weekStart: WeekStart) = context.tempoDataStore.edit { it[Keys.WEEK_START] = weekStart.name }
     suspend fun setUse24HourTime(enabled: Boolean) = context.tempoDataStore.edit { it[Keys.USE_24_HOUR] = enabled }
-    suspend fun setStaleTimerHours(hours: Int) = context.tempoDataStore.edit { it[Keys.STALE_TIMER_HOURS] = hours.coerceIn(2, 48) }
+    suspend fun setStaleTimerHours(hours: Int) = context.tempoDataStore.edit { it[Keys.STALE_TIMER_HOURS] = hours.coerceIn(1, 72) }
 
     private object Keys {
         val THEME = stringPreferencesKey("theme")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val TIMER_NOTIFICATION = booleanPreferencesKey("timer_notification")
+        val NOTIFICATION_PERMISSION_ASKED = booleanPreferencesKey("notification_permission_asked")
         val WEEK_START = stringPreferencesKey("week_start")
         val USE_24_HOUR = booleanPreferencesKey("use_24_hour")
         val STALE_TIMER_HOURS = intPreferencesKey("stale_timer_hours")

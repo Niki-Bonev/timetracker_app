@@ -27,7 +27,7 @@ class BackupRepository(
 ) {
     suspend fun exportJson(ownerId: String): File = withContext(ioDispatcher) {
         val root = JSONObject().apply {
-            put("schemaVersion", 1)
+            put("schemaVersion", 2)
             put("exportedAt", System.currentTimeMillis())
             put("projects", JSONArray(database.getProjects(ownerId, includeArchived = true, includeDeleted = false).map { it.toJson() }))
             put("sessions", JSONArray(database.getSessions(ownerId, includeDeleted = false).map { it.toJson() }))
@@ -39,14 +39,17 @@ class BackupRepository(
     suspend fun exportCsv(ownerId: String): File = withContext(ioDispatcher) {
         val projects = database.getProjects(ownerId, includeArchived = true).associateBy { it.id }
         val sessions = database.getSessions(ownerId).sortedBy { it.startedAt }
-        val lines = mutableListOf("session_id,project,start,end,work_minutes,break_minutes,intention,note,outcome,quality")
+        val lines = mutableListOf("session_id,project,subproject,start,end,work_minutes,break_minutes,intention,note,outcome,quality")
         sessions.forEach { session ->
             val intervals = database.getIntervalsForSession(session.id)
             val workMinutes = intervals.filter { it.type == IntervalType.WORK }.sumOf { it.durationMillis(session.endedAt ?: System.currentTimeMillis()) } / 60_000.0
             val breakMinutes = intervals.filter { it.type == IntervalType.BREAK }.sumOf { it.durationMillis(session.endedAt ?: System.currentTimeMillis()) } / 60_000.0
+            val project = projects[session.projectId]
+            val parent = project?.parentProjectId?.let(projects::get)
             lines += listOf(
                 session.id,
-                projects[session.projectId]?.name.orEmpty(),
+                parent?.name ?: project?.name.orEmpty(),
+                if (parent != null) project.name else "",
                 iso(session.startedAt),
                 session.endedAt?.let(::iso).orEmpty(),
                 "%.2f".format(java.util.Locale.ROOT, workMinutes),
@@ -63,7 +66,8 @@ class BackupRepository(
     suspend fun importJson(ownerId: String, input: InputStream): ImportSummary = withContext(ioDispatcher) {
         val text = input.bufferedReader().use { it.readText() }
         val root = JSONObject(text)
-        require(root.optInt("schemaVersion", -1) == 1) { "This Tempo backup uses an unsupported schema version." }
+        val schema = root.optInt("schemaVersion", -1)
+        require(schema in 1..2) { "This Tempo backup uses an unsupported schema version." }
         val projects = root.getJSONArray("projects").objects().map { it.toProject(ownerId) }
         val sessions = root.getJSONArray("sessions").objects().map { it.toSession(ownerId) }
         val intervals = root.getJSONArray("intervals").objects().map { it.toInterval(ownerId) }
@@ -82,7 +86,10 @@ class BackupRepository(
 
     private fun Project.toJson() = JSONObject().apply {
         put("id", id); put("name", name); put("colorArgb", colorArgb); put("icon", icon)
-        put("weeklyGoalMinutes", weeklyGoalMinutes); put("archived", archived); put("createdAt", createdAt); put("updatedAt", updatedAt)
+        putNullable("parentProjectId", parentProjectId)
+        put("weeklyGoalMinutes", weeklyGoalMinutes); put("goalMinutes", goalMinutes)
+        putNullable("goalStartAt", goalStartAt); putNullable("goalEndAt", goalEndAt)
+        put("archived", archived); put("createdAt", createdAt); put("updatedAt", updatedAt)
     }
 
     private fun Session.toJson() = JSONObject().apply {
@@ -98,9 +105,19 @@ class BackupRepository(
     }
 
     private fun JSONObject.toProject(ownerId: String) = Project(
-        id = getString("id"), ownerId = ownerId, name = getString("name"), colorArgb = getLong("colorArgb"),
-        icon = optString("icon", "●"), weeklyGoalMinutes = optInt("weeklyGoalMinutes", 0), archived = optBoolean("archived", false),
-        createdAt = optLong("createdAt", System.currentTimeMillis()), updatedAt = optLong("updatedAt", System.currentTimeMillis()),
+        id = getString("id"),
+        ownerId = ownerId,
+        name = getString("name"),
+        colorArgb = getLong("colorArgb"),
+        icon = optString("icon", "●"),
+        parentProjectId = nullableString("parentProjectId"),
+        weeklyGoalMinutes = optInt("weeklyGoalMinutes", 0),
+        goalMinutes = optInt("goalMinutes", 0),
+        goalStartAt = nullableLong("goalStartAt"),
+        goalEndAt = nullableLong("goalEndAt"),
+        archived = optBoolean("archived", false),
+        createdAt = optLong("createdAt", System.currentTimeMillis()),
+        updatedAt = optLong("updatedAt", System.currentTimeMillis()),
     )
 
     private fun JSONObject.toSession(ownerId: String) = Session(
@@ -120,6 +137,7 @@ class BackupRepository(
     private fun JSONObject.putNullable(key: String, value: Any?) { if (value == null) put(key, JSONObject.NULL) else put(key, value) }
     private fun JSONObject.nullableLong(key: String): Long? = if (!has(key) || isNull(key)) null else getLong(key)
     private fun JSONObject.nullableInt(key: String): Int? = if (!has(key) || isNull(key)) null else getInt(key)
+    private fun JSONObject.nullableString(key: String): String? = if (!has(key) || isNull(key)) null else getString(key)
     private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
     private inline fun <reified T : Enum<T>> enumValueOrDefault(raw: String, fallback: T): T = enumValues<T>().firstOrNull { it.name == raw } ?: fallback
 

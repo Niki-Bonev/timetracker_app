@@ -13,9 +13,24 @@ fun formatDuration(millis: Long, compact: Boolean = false): String {
     val seconds = totalSeconds % 60L
     return when {
         compact && hours > 0 -> "${hours}h ${minutes}m"
-        compact -> "${minutes}m"
+        compact && minutes > 0 -> "${minutes}m ${seconds}s"
+        compact -> "${seconds}s"
         hours > 0 -> "%d:%02d:%02d".format(Locale.ROOT, hours, minutes, seconds)
         else -> "%02d:%02d".format(Locale.ROOT, minutes, seconds)
+    }
+}
+
+fun formatDurationPrecise(millis: Long): String {
+    val safe = millis.coerceAtLeast(0L)
+    val totalSeconds = safe / 1000L
+    val hours = totalSeconds / 3600L
+    val minutes = (totalSeconds % 3600L) / 60L
+    val seconds = totalSeconds % 60L
+    val ms = safe % 1000L
+    return if (hours > 0) {
+        "%d:%02d:%02d.%03d".format(Locale.ROOT, hours, minutes, seconds, ms)
+    } else {
+        "%02d:%02d.%03d".format(Locale.ROOT, minutes, seconds, ms)
     }
 }
 
