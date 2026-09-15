@@ -1,7 +1,6 @@
 package com.nikibonev.tempo.ui.theme
 
 import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -49,12 +48,7 @@ private val DarkColors = darkColorScheme(
 
 @Composable
 fun TempoTheme(settings: AppSettings, content: @Composable () -> Unit) {
-    val systemDark = isSystemInDarkTheme()
-    val dark = when (settings.theme) {
-        AppTheme.SYSTEM -> systemDark
-        AppTheme.LIGHT -> false
-        AppTheme.DARK -> true
-    }
+    val dark = settings.theme == AppTheme.DARK
     val context = LocalContext.current
     val scheme = when {
         settings.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
