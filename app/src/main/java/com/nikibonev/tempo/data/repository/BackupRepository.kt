@@ -49,7 +49,7 @@ class BackupRepository(
             lines += listOf(
                 session.id,
                 parent?.name ?: project?.name.orEmpty(),
-                if (parent != null) project?.name.orEmpty() else "",
+                if (parent != null) project.name else "",
                 iso(session.startedAt),
                 session.endedAt?.let(::iso).orEmpty(),
                 "%.2f".format(java.util.Locale.ROOT, workMinutes),
