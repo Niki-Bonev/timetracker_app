@@ -24,11 +24,11 @@ class TimerNotificationManager(private val context: Context) {
         if (!settings.showTimerNotification || active == null || !canPostNotifications()) { cancel(); return }
         val notificationManager = NotificationManagerCompat.from(context)
         val openApp = PendingIntent.getActivity(context, 100, Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val action = if (active.isPaused) ACTION_RESUME else ACTION_PAUSE
+        val timerAction = if (active.isPaused) ACTION_RESUME else ACTION_PAUSE
         val actionLabel = if (active.isPaused) "Resume" else "Pause"
         val actionIcon = if (active.isPaused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause
-        val actionIntent = PendingIntent.getBroadcast(context, if (active.isPaused) 201 else 202, Intent(context, TimerActionReceiver::class.java).apply { this.action = action; putExtra(EXTRA_OWNER_ID, active.session.ownerId) }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val finishIntent = PendingIntent.getBroadcast(context, 203, Intent(context, TimerActionReceiver::class.java).apply { action = ACTION_FINISH; putExtra(EXTRA_OWNER_ID, active.session.ownerId) }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val actionIntent = PendingIntent.getBroadcast(context, if (active.isPaused) 201 else 202, Intent(context, TimerActionReceiver::class.java).apply { this.action = timerAction; putExtra(EXTRA_OWNER_ID, active.session.ownerId) }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val finishIntent = PendingIntent.getBroadcast(context, 203, Intent(context, TimerActionReceiver::class.java).apply { this.action = ACTION_FINISH; putExtra(EXTRA_OWNER_ID, active.session.ownerId) }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val currentInterval = active.intervals.lastOrNull { !it.deleted && it.endedAt == null }
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_timer)
