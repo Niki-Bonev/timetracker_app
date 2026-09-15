@@ -2,7 +2,6 @@ package com.nikibonev.tempo
 
 import android.content.Context
 import com.nikibonev.tempo.data.local.TempoDatabase
-import com.nikibonev.tempo.data.model.AccountState
 import com.nikibonev.tempo.data.repository.AuthRepository
 import com.nikibonev.tempo.data.repository.BackupRepository
 import com.nikibonev.tempo.data.repository.CloudSyncRepository
@@ -31,7 +30,7 @@ class AppGraph(context: Context) {
     val backupRepository = BackupRepository(appContext, database, timeRepository)
     val notificationManager = TimerNotificationManager(appContext)
 
-    val ownerId = authRepository.state.map(AccountState::ownerId).distinctUntilChanged()
+    val ownerId = authRepository.state.map { account -> account.ownerId }.distinctUntilChanged()
 
     private var syncJob: Job? = null
 
