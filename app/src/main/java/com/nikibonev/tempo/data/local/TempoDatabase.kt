@@ -123,9 +123,9 @@ class TempoDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null,
         writableDatabase.beginTransaction()
         try {
             val now = System.currentTimeMillis()
-            writableDatabase.execSQL("UPDATE projects SET owner_id = ?, updated_at = ? WHERE owner_id = 'guest'", arrayOf(uid, now))
-            writableDatabase.execSQL("UPDATE sessions SET owner_id = ?, updated_at = ? WHERE owner_id = 'guest'", arrayOf(uid, now))
-            writableDatabase.execSQL("UPDATE intervals SET owner_id = ?, updated_at = ? WHERE owner_id = 'guest'", arrayOf(uid, now))
+            writableDatabase.execSQL("UPDATE projects SET owner_id = ?, updated_at = ? WHERE owner_id = 'guest'", arrayOf<Any>(uid, now))
+            writableDatabase.execSQL("UPDATE sessions SET owner_id = ?, updated_at = ? WHERE owner_id = 'guest'", arrayOf<Any>(uid, now))
+            writableDatabase.execSQL("UPDATE intervals SET owner_id = ?, updated_at = ? WHERE owner_id = 'guest'", arrayOf<Any>(uid, now))
             writableDatabase.setTransactionSuccessful()
         } finally { writableDatabase.endTransaction() }
     }
