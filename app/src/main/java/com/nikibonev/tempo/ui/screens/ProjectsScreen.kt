@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -53,7 +52,6 @@ import com.nikibonev.tempo.data.model.SessionOutcome
 import com.nikibonev.tempo.data.model.TimeDataSnapshot
 import com.nikibonev.tempo.data.repository.AnalyticsEngine
 import com.nikibonev.tempo.ui.components.EmptyState
-import com.nikibonev.tempo.ui.components.ProjectIdentity
 import com.nikibonev.tempo.ui.components.SectionHeader
 import com.nikibonev.tempo.ui.components.SelectablePill
 import com.nikibonev.tempo.util.ProjectColorPalette
@@ -63,6 +61,8 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import kotlin.math.ceil
+
+private enum class GoalMode { NONE, WEEKLY, PERIOD }
 
 @Composable
 fun ProjectsScreen(
@@ -122,36 +122,21 @@ fun ProjectsScreen(
     }
 
     if (creatingParent) {
-        ProjectEditorDialog(
-            project = null,
-            parentProjectId = null,
-            usedColors = usedColors,
-            onDismiss = { creatingParent = false },
-        ) { name, color, icon, weekly, parentId, goalMinutes, goalStart, goalEnd ->
+        ProjectEditorDialog(null, null, usedColors, { creatingParent = false }) { name, color, icon, weekly, parentId, goalMinutes, goalStart, goalEnd ->
             creatingParent = false
             onCreate(name, color, icon, weekly, parentId, goalMinutes, goalStart, goalEnd)
         }
     }
 
     creatingChildFor?.let { parent ->
-        ProjectEditorDialog(
-            project = null,
-            parentProjectId = parent.id,
-            usedColors = usedColors,
-            onDismiss = { creatingChildFor = null },
-        ) { name, color, icon, weekly, parentId, goalMinutes, goalStart, goalEnd ->
+        ProjectEditorDialog(null, parent.id, usedColors, { creatingChildFor = null }) { name, color, icon, weekly, parentId, goalMinutes, goalStart, goalEnd ->
             creatingChildFor = null
             onCreate(name, color, icon, weekly, parentId, goalMinutes, goalStart, goalEnd)
         }
     }
 
     editor?.let { project ->
-        ProjectEditorDialog(
-            project = project,
-            parentProjectId = project.parentProjectId,
-            usedColors = usedColors - project.colorArgb,
-            onDismiss = { editor = null },
-        ) { name, color, icon, weekly, parentId, goalMinutes, goalStart, goalEnd ->
+        ProjectEditorDialog(project, project.parentProjectId, usedColors - project.colorArgb, { editor = null }) { name, color, icon, weekly, parentId, goalMinutes, goalStart, goalEnd ->
             editor = null
             onUpdate(project.copy(
                 name = name,
@@ -263,7 +248,7 @@ private fun ProjectLibrary(
                 ProjectLibraryCard(project, workMillis, children.size, false, false, { onOpen(project) }, {}, { onEdit(project) })
             }
         }
-        item { Spacer(Modifier.height(12.dp)) }
+        item { Spacer(Modifier.padding(bottom = 12.dp)) }
     }
 }
 
@@ -344,9 +329,7 @@ private fun ProjectDetail(
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item {
-            TextButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, null); Text(" Projects") }
-        }
+        item { TextButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, null); Text(" Projects") } }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = projectColor, contentColor = projectText)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -370,9 +353,7 @@ private fun ProjectDetail(
                 }
             }
         }
-
         item { ProjectGoalCard(project, snapshot, ids, now, weekStartsMonday) }
-
         item {
             SectionHeader("Subprojects / tasks", "Track separate areas without losing the project-wide view", trailing = {
                 TextButton(onClick = onAddChild) { Icon(Icons.Outlined.Add, null); Text("Add") }
@@ -383,19 +364,23 @@ private fun ProjectDetail(
         } else {
             items(children, key = { it.id }) { child ->
                 val childWork = snapshot.sessions.filter { !it.session.deleted && it.session.projectId == child.id }.sumOf { it.workMillis(now) }
-                ChildProjectCard(child, childWork, snapshot.activeTimer?.project?.id == child.id, snapshot.activeTimer == null && !child.archived, { onStartChild(child) }, { onEditChild(child) })
+                ChildProjectCard(
+                    child,
+                    childWork,
+                    snapshot.activeTimer?.project?.id == child.id,
+                    snapshot.activeTimer == null && !child.archived,
+                    { onStartChild(child) },
+                    { onEditChild(child) },
+                )
             }
         }
-
         item { SectionHeader("History", "Sessions for ${project.name} and its subprojects") }
         if (sessions.isEmpty()) {
             item { EmptyState("No sessions yet", "Start from here or from Focus. Manual time can be added with the button above.") }
         } else {
-            items(sessions, key = { it.session.id }) { details ->
-                SessionHistoryCard(details, now, use24Hour) { onEditSession(details) }
-            }
+            items(sessions, key = { it.session.id }) { details -> SessionHistoryCard(details, now, use24Hour) { onEditSession(details) } }
         }
-        item { Spacer(Modifier.height(12.dp)) }
+        item { Spacer(Modifier.padding(bottom = 12.dp)) }
     }
 }
 
@@ -475,8 +460,6 @@ fun ProjectEditorDialog(
     onDismiss: () -> Unit,
     onSave: (String, Long, String, Int, String?, Int, Long?, Long?) -> Unit,
 ) {
-    enum class GoalMode { NONE, WEEKLY, PERIOD }
-
     val initialColor = project?.colorArgb ?: ProjectColorPalette.firstOrNull { it !in usedColors } ?: ProjectColorPalette.first()
     var name by remember(project?.id, parentProjectId) { mutableStateOf(project?.name.orEmpty()) }
     var color by remember(project?.id) { mutableStateOf(initialColor) }
@@ -488,13 +471,13 @@ fun ProjectEditorDialog(
             else -> GoalMode.NONE
         })
     }
-    val existingGoalMinutes = when (goalMode) {
+    val initialGoal = when (goalMode) {
         GoalMode.WEEKLY -> project?.weeklyGoalMinutes ?: 0
         GoalMode.PERIOD -> project?.goalMinutes ?: 0
         GoalMode.NONE -> 0
     }
-    var goalHours by remember(project?.id) { mutableStateOf((existingGoalMinutes / 60).takeIf { it > 0 }?.toString().orEmpty()) }
-    var goalMinutes by remember(project?.id) { mutableStateOf((existingGoalMinutes % 60).takeIf { it > 0 }?.toString().orEmpty()) }
+    var goalHours by remember(project?.id) { mutableStateOf((initialGoal / 60).takeIf { it > 0 }?.toString().orEmpty()) }
+    var goalMinutesText by remember(project?.id) { mutableStateOf((initialGoal % 60).takeIf { it > 0 }?.toString().orEmpty()) }
     val existingDays = if (project?.hasDateRangeGoal == true) {
         ChronoUnit.DAYS.between(
             Instant.ofEpochMilli(project.goalStartAt ?: System.currentTimeMillis()).atZone(ZoneId.systemDefault()).toLocalDate(),
@@ -537,10 +520,16 @@ fun ProjectEditorDialog(
                 if (goalMode != GoalMode.NONE) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(goalHours, { goalHours = it.filter(Char::isDigit).take(4) }, label = { Text("Hours") }, modifier = Modifier.weight(1f))
-                        OutlinedTextField(goalMinutes, { goalMinutes = it.filter(Char::isDigit).take(2) }, label = { Text("Minutes") }, modifier = Modifier.weight(1f))
+                        OutlinedTextField(goalMinutesText, { goalMinutesText = it.filter(Char::isDigit).take(2) }, label = { Text("Minutes") }, modifier = Modifier.weight(1f))
                     }
                     if (goalMode == GoalMode.PERIOD) {
-                        OutlinedTextField(periodDays, { periodDays = it.filter(Char::isDigit).take(4) }, label = { Text("Period length (days)") }, supportingText = { Text("Starts when you save the goal. Example: 90 days.") }, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(
+                            periodDays,
+                            { periodDays = it.filter(Char::isDigit).take(4) },
+                            label = { Text("Period length (days)") },
+                            supportingText = { Text("Starts when you save the goal. Example: 90 days.") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
                 if (!colorAvailable) Text("Choose a different color; active projects should be visually distinct.", color = MaterialTheme.colorScheme.error)
@@ -550,7 +539,7 @@ fun ProjectEditorDialog(
             Button(
                 enabled = name.isNotBlank() && colorAvailable,
                 onClick = {
-                    val totalGoal = ((goalHours.toIntOrNull() ?: 0) * 60 + (goalMinutes.toIntOrNull() ?: 0)).coerceAtLeast(0)
+                    val totalGoal = ((goalHours.toIntOrNull() ?: 0) * 60 + (goalMinutesText.toIntOrNull() ?: 0)).coerceAtLeast(0)
                     val weekly = if (goalMode == GoalMode.WEEKLY) totalGoal else 0
                     val start = if (goalMode == GoalMode.PERIOD && totalGoal > 0) System.currentTimeMillis() else null
                     val end = if (start != null) start + (periodDays.toLongOrNull() ?: 30L).coerceAtLeast(1L) * 86_400_000L else null
