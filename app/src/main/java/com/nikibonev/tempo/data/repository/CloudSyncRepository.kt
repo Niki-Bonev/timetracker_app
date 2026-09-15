@@ -128,7 +128,7 @@ class CloudSyncRepository(
             }
             batch.commit().awaitResult()
         }
-        db.collection(USERS).document(uid).set(mapOf("lastSyncedAt" to System.currentTimeMillis(), "schemaVersion" to 1), SetOptions.merge()).awaitResult()
+        db.collection(USERS).document(uid).set(mapOf("lastSyncedAt" to System.currentTimeMillis(), "schemaVersion" to 2), SetOptions.merge()).awaitResult()
     }
 
     private fun resolveMultipleActiveSessions(uid: String) {
@@ -159,15 +159,19 @@ class CloudSyncRepository(
 
     private fun Project.toCloudMap(): Map<String, Any?> = mapOf(
         "id" to id, "name" to name, "colorArgb" to colorArgb, "icon" to icon,
-        "weeklyGoalMinutes" to weeklyGoalMinutes, "archived" to archived,
-        "createdAt" to createdAt, "updatedAt" to updatedAt, "deleted" to deleted,
+        "parentProjectId" to parentProjectId,
+        "weeklyGoalMinutes" to weeklyGoalMinutes, "goalMinutes" to goalMinutes,
+        "goalStartAt" to goalStartAt, "goalEndAt" to goalEndAt,
+        "archived" to archived, "createdAt" to createdAt, "updatedAt" to updatedAt, "deleted" to deleted,
     )
+
     private fun Session.toCloudMap(): Map<String, Any?> = mapOf(
         "id" to id, "projectId" to projectId, "intention" to intention, "note" to note,
         "plannedMinutes" to plannedMinutes, "outcome" to outcome.name, "quality" to quality,
         "state" to state.name, "startedAt" to startedAt, "endedAt" to endedAt,
         "createdAt" to createdAt, "updatedAt" to updatedAt, "deleted" to deleted,
     )
+
     private fun TimeInterval.toCloudMap(): Map<String, Any?> = mapOf(
         "id" to id, "sessionId" to sessionId, "type" to type.name, "startedAt" to startedAt,
         "endedAt" to endedAt, "updatedAt" to updatedAt, "deleted" to deleted,
@@ -175,12 +179,23 @@ class CloudSyncRepository(
 
     private fun DocumentSnapshot.toProject(ownerId: String): Project? = runCatching {
         Project(
-            id = string("id") ?: id, ownerId = ownerId, name = string("name") ?: "Untitled project",
-            colorArgb = long("colorArgb") ?: 0xFF8B7CFF, icon = string("icon") ?: "●",
-            weeklyGoalMinutes = (long("weeklyGoalMinutes") ?: 0L).toInt(), archived = boolean("archived") ?: false,
-            createdAt = long("createdAt") ?: 0L, updatedAt = long("updatedAt") ?: 0L, deleted = boolean("deleted") ?: false,
+            id = string("id") ?: id,
+            ownerId = ownerId,
+            name = string("name") ?: "Untitled project",
+            colorArgb = long("colorArgb") ?: 0xFF8B7CFF,
+            icon = string("icon") ?: "●",
+            parentProjectId = string("parentProjectId"),
+            weeklyGoalMinutes = (long("weeklyGoalMinutes") ?: 0L).toInt(),
+            goalMinutes = (long("goalMinutes") ?: 0L).toInt(),
+            goalStartAt = long("goalStartAt"),
+            goalEndAt = long("goalEndAt"),
+            archived = boolean("archived") ?: false,
+            createdAt = long("createdAt") ?: 0L,
+            updatedAt = long("updatedAt") ?: 0L,
+            deleted = boolean("deleted") ?: false,
         )
     }.getOrNull()
+
     private fun DocumentSnapshot.toSession(ownerId: String): Session? = runCatching {
         Session(
             id = string("id") ?: id, ownerId = ownerId, projectId = requireNotNull(string("projectId")),
@@ -191,6 +206,7 @@ class CloudSyncRepository(
             deleted = boolean("deleted") ?: false,
         )
     }.getOrNull()
+
     private fun DocumentSnapshot.toInterval(ownerId: String): TimeInterval? = runCatching {
         TimeInterval(
             id = string("id") ?: id, ownerId = ownerId, sessionId = requireNotNull(string("sessionId")),
